@@ -4,7 +4,6 @@ import org.jspecify.annotations.NonNull;
 import su.nightexpress.excellenteconomy.api.currency.ExcellentCurrency;
 import su.nightexpress.excellenteconomy.api.currency.operation.NotificationTarget;
 import su.nightexpress.excellenteconomy.api.currency.operation.OperationContext;
-import su.nightexpress.excellenteconomy.api.currency.operation.OperationResult;
 import su.nightexpress.excellenteconomy.command.CommandArguments;
 import su.nightexpress.excellenteconomy.command.currency.CurrencyCommand;
 import su.nightexpress.excellenteconomy.config.Lang;
@@ -46,6 +45,7 @@ public class GiveAllCommand implements CurrencyCommand {
             .silentFor(NotificationTarget.USER, context.hasFlag(CommandArguments.FLAG_SILENT))
             .silentFor(NotificationTarget.EXECUTOR, context.hasFlag(CommandArguments.FLAG_NO_FEEDBACK));
 
-        return this.manager.giveAll(operationContext, currency, amount) == OperationResult.SUCCESS;
+        this.manager.giveAllAsync(operationContext, currency, amount, context.getSender());
+        return true;
     }
 }

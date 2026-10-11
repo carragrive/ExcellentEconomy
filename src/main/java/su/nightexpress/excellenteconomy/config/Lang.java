@@ -62,6 +62,9 @@ public class Lang implements LangContainer {
             GRAY.wrap(SOFT_RED.wrap(CommonPlaceholders.GENERIC_INPUT) + " is not a valid currency!"));
 
 
+    public static final MessageLocale CURRENCY_OPERATION_FAILED = LangEntry.builder("Currency.Operation.Failed")
+        .chatMessage(SOFT_RED.wrap("The balance operation failed. Check funds, balance limits, and the server log."));
+
     public static final MessageLocale CURRENCY_OPERATION_DISABLED = LangEntry.builder("Currency.Operation.Disabled")
         .chatMessage(
             SOFT_RED.wrap("Currency operations are temporarily disabled.")

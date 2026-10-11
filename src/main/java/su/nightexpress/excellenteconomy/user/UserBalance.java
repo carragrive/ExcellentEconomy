@@ -10,6 +10,7 @@ import su.nightexpress.excellenteconomy.api.currency.ExcellentCurrency;
 public class UserBalance {
 
     private final Map<String, Double> balanceMap;
+    private final Map<String, Long> versions = new ConcurrentHashMap<>();
 
     public UserBalance() {
         this(new ConcurrentHashMap<>());
@@ -27,6 +28,16 @@ public class UserBalance {
     @NonNull
     public Map<String, Double> getBalanceMap() {
         return Map.copyOf(this.balanceMap);
+    }
+
+    public synchronized void apply(@NonNull String currencyId, double amount, long version) {
+        if (version < this.versions.getOrDefault(currencyId, -1L)) return;
+        this.balanceMap.put(currencyId, amount);
+        this.versions.put(currencyId, version);
+    }
+
+    public long getVersion(@NonNull String currencyId) {
+        return this.versions.getOrDefault(currencyId, 0L);
     }
 
     public void clear() {

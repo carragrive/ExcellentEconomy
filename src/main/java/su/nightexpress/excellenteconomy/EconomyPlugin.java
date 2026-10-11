@@ -15,6 +15,7 @@ import su.nightexpress.excellenteconomy.data.DataHandler;
 import su.nightexpress.excellenteconomy.migration.MigrationManager;
 import su.nightexpress.excellenteconomy.tops.TopManager;
 import su.nightexpress.excellenteconomy.user.UserManager;
+import su.nightexpress.excellenteconomy.hook.VaultUnlockedEconomy;
 import su.nightexpress.nightcore.NightPlugin;
 import su.nightexpress.nightcore.bridge.placeholder.PlaceholderProvider;
 import su.nightexpress.nightcore.bridge.placeholder.PlaceholderRegistry;
@@ -39,6 +40,7 @@ public class EconomyPlugin extends NightPlugin {
     MigrationManager migrationManager;
 
     private PlaceholderRegistry legacyPlaceholders;
+    private AutoCloseable vaultUnlocked;
 
     @Override
     @NonNull
@@ -71,6 +73,19 @@ public class EconomyPlugin extends NightPlugin {
 
         this.currencyManager = new CurrencyManager(this, this.currencyRegistry, this.commandManager, this.dataHandler, this.userManager);
         this.currencyManager.setup();
+
+        if (Config.INTEGRATION_VAULT_ENABLED.get() && this.currencyRegistry.hasPrimary()) {
+            try {
+                Class.forName("net.milkbowl.vault2.economy.AsyncEconomy");
+                this.vaultUnlocked = new VaultUnlockedEconomy(this);
+                this.info("Registered VaultUnlocked asynchronous economy provider.");
+            }
+            catch (ClassNotFoundException ignored) {
+                this.info("VaultUnlocked 2.20+ is required for the asynchronous Vault API.");
+            }
+        }
+
+        this.info("Balance writes require async callers; main-thread synchronous Vault writes return failure.");
 
         if (Config.isTopsEnabled()) {
             this.topManager = new TopManager(this, this.currencyRegistry, this.commandManager, this.userManager);
@@ -106,6 +121,17 @@ public class EconomyPlugin extends NightPlugin {
 
     @Override
     public void disable() {
+        if (this.currencyManager != null) this.currencyManager.disableOperations();
+        if (this.vaultUnlocked != null) {
+            try {
+                this.vaultUnlocked.close();
+            }
+            catch (Exception exception) {
+                this.getLogger().log(java.util.logging.Level.SEVERE, "Could not unregister VaultUnlocked", exception);
+            }
+            this.vaultUnlocked = null;
+        }
+        if (this.dataHandler != null) this.dataHandler.getBalances().close();
         if (this.commandManager != null) this.commandManager.shutdown();
         if (this.topManager != null) this.topManager.shutdown();
         if (this.migrationManager != null) this.migrationManager.shutdown();

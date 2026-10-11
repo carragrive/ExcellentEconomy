@@ -48,16 +48,16 @@ public class ResetCommand implements CurrencyCommand {
         CommandSender sender = context.getSender();
         String playerName = arguments.getString(CommandArguments.PLAYER);
 
-        this.userManager.loadByNameAsync(playerName).thenAccept(opt -> {
-            CoinsUser user = opt.orElse(null);
+        OperationContext operationContext = OperationContext.of(sender)
+            .silentFor(NotificationTarget.USER, context.hasFlag(CommandArguments.FLAG_SILENT))
+            .silentFor(NotificationTarget.EXECUTOR, context.hasFlag(CommandArguments.FLAG_NO_FEEDBACK));
+
+        this.manager.executeAsync(context.getSender(), () -> {
+            CoinsUser user = this.userManager.getOrFetch(playerName).orElse(null);
             if (user == null) {
-                currency.sendPrefixed(CoreLang.ERROR_INVALID_PLAYER, sender);
+                this.manager.notify(() -> currency.sendPrefixed(CoreLang.ERROR_INVALID_PLAYER, sender));
                 return;
             }
-
-            OperationContext operationContext = OperationContext.of(sender)
-                .silentFor(NotificationTarget.USER, context.hasFlag(CommandArguments.FLAG_SILENT))
-                .silentFor(NotificationTarget.EXECUTOR, context.hasFlag(CommandArguments.FLAG_NO_FEEDBACK));
 
             this.manager.reset(operationContext, user, currency);
         });

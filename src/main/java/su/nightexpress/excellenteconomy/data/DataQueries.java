@@ -26,7 +26,7 @@ public class DataQueries {
 
         DataColumns.currencies().forEach((id, column) -> {
             try {
-                balance.add(id, column.readOrThrow(resultSet));
+                balance.apply(id, column.readOrThrow(resultSet), DataColumns.BALANCE_VERSION.readOrThrow(resultSet));
             }
             catch (SQLException exception) {
                 exception.printStackTrace();
@@ -61,9 +61,18 @@ public class DataQueries {
         return SelectStatement.builder(DataQueries.USER_LOADER).build();
     }
 
+    public static SelectStatement<CoinsUser> userSelect(BalanceService balances) {
+        return SelectStatement.builder(resultSet -> {
+            CoinsUser user = USER_LOADER.map(resultSet);
+            if (user != null) user.bindBalances(balances);
+            return user;
+        }).build();
+    }
+
     @NonNull
     public static InsertStatement<CoinsUser> userInsert() {
         var builder = InsertStatement.<CoinsUser>builder()
+            .ignoreDuplications()
             .setUUID(DataColumns.USER_UUID, CoinsUser::getId)
             .setString(DataColumns.USER_NAME, CoinsUser::getName)
             .setString(DataColumns.USER_SETTINGS, user -> DataHandler.GSON.toJson(user.getSettingsMap()))
@@ -79,17 +88,12 @@ public class DataQueries {
 
     @NonNull
     public static UpdateStatement<CoinsUser> userUpdate() {
-        var builder = UpdateStatement.<CoinsUser>builder()
+        return UpdateStatement.<CoinsUser>builder()
             .setString(DataColumns.USER_NAME, CoinsUser::getName)
             .setString(DataColumns.USER_SETTINGS, user -> DataHandler.GSON.toJson(user.getSettingsMap()))
             .setLong(DataColumns.USER_LAST_SEEN, CoinsUser::getLastSeen)
-            .setBoolean(DataColumns.USER_HIDE_FROM_TOPS, CoinsUser::isHiddenFromTops);
-
-        DataColumns.currencies().forEach((id, column) -> {
-            builder.setDouble(column, user -> user.getBalance().get(id));
-        });
-
-        return builder.build();
+            .setBoolean(DataColumns.USER_HIDE_FROM_TOPS, CoinsUser::isHiddenFromTops)
+            .build();
     }
 
     @NonNull

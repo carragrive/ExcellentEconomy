@@ -47,6 +47,7 @@ public class ExchangeCommand implements CurrencyCommand {
         ExcellentCurrency targetCurrency = arguments.get(CommandArguments.CURRENCY, ExcellentCurrency.class);
         double amount = arguments.getDouble(CommandArguments.AMOUNT);
 
-        return this.manager.exchange(player, currency, targetCurrency, amount);
+        this.manager.executeAsync(player, () -> this.manager.exchange(player, currency, targetCurrency, amount));
+        return true;
     }
 }

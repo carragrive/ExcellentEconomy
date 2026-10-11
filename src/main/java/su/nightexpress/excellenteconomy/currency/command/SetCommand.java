@@ -49,17 +49,17 @@ public class SetCommand implements CurrencyCommand {
         double amount = Math.max(0, arguments.getDouble(CommandArguments.AMOUNT));
         String playerName = arguments.getString(CommandArguments.PLAYER);
 
-        this.userManager.loadByNameAsync(playerName).thenAccept(opt -> {
-            CoinsUser user = opt.orElse(null);
+        OperationContext operationContext = OperationContext.of(context.getSender())
+            .silentFor(NotificationTarget.CONSOLE_LOGGER)
+            .silentFor(NotificationTarget.USER, context.hasFlag(CommandArguments.FLAG_SILENT))
+            .silentFor(NotificationTarget.EXECUTOR, context.hasFlag(CommandArguments.FLAG_NO_FEEDBACK));
+
+        this.manager.executeAsync(context.getSender(), () -> {
+            CoinsUser user = this.userManager.getOrFetch(playerName).orElse(null);
             if (user == null) {
-                context.errorBadPlayer();
+                this.manager.notify(context::errorBadPlayer);
                 return;
             }
-
-            OperationContext operationContext = OperationContext.of(context.getSender())
-                .silentFor(NotificationTarget.CONSOLE_LOGGER)
-                .silentFor(NotificationTarget.USER, context.hasFlag(CommandArguments.FLAG_SILENT))
-                .silentFor(NotificationTarget.EXECUTOR, context.hasFlag(CommandArguments.FLAG_NO_FEEDBACK));
 
             this.manager.set(operationContext, user, currency, amount);
         });

@@ -113,7 +113,7 @@ public class EconomyCurrency extends AbstractCurrency implements Economy {
 
     @Override
     public double getBalance(OfflinePlayer player) {
-        CoinsUser user = this.api.userManager().getOrFetch(player.getUniqueId()).orElse(null);
+        CoinsUser user = (Bukkit.isPrimaryThread() ? this.api.getCachedUserData(player.getUniqueId()) : this.api.userManager().getOrFetch(player.getUniqueId())).orElse(null);
         return this.getBalance(user);
     }
 
@@ -124,12 +124,13 @@ public class EconomyCurrency extends AbstractCurrency implements Economy {
 
     @Override
     public double getBalance(String playerName) {
-        CoinsUser user = this.api.userManager().getOrFetch(playerName).orElse(null);
+        CoinsUser user = (Bukkit.isPrimaryThread() ? this.api.getCachedUserData(playerName) : this.api.userManager().getOrFetch(playerName)).orElse(null);
         return this.getBalance(user);
     }
 
     private double getBalance(@Nullable CoinsUser user) {
-        return user == null ? 0D : user.getBalance(this);
+        return user == null ? 0D : Bukkit.isPrimaryThread() ? user.getBalance(this)
+            : this.api.dataHandler().getBalances().refresh(user, this);
     }
 
 
@@ -140,7 +141,8 @@ public class EconomyCurrency extends AbstractCurrency implements Economy {
 
     @Override
     public boolean hasAccount(OfflinePlayer player) {
-        return this.api.userManager().getDataAccessor().isExists(player.getUniqueId());
+        return Bukkit.isPrimaryThread() ? this.api.getCachedUserData(player.getUniqueId()).isPresent()
+            : this.api.userManager().getDataAccessor().isExists(player.getUniqueId());
     }
 
     @Override
@@ -150,7 +152,8 @@ public class EconomyCurrency extends AbstractCurrency implements Economy {
 
     @Override
     public boolean hasAccount(String playerName) {
-        return this.api.userManager().getDataAccessor().isExists(playerName);
+        return Bukkit.isPrimaryThread() ? this.api.getCachedUserData(playerName).isPresent()
+            : this.api.userManager().getDataAccessor().isExists(playerName);
     }
 
 
@@ -161,7 +164,7 @@ public class EconomyCurrency extends AbstractCurrency implements Economy {
 
     @Override
     public boolean has(OfflinePlayer player, double amount) {
-        CoinsUser user = this.api.userManager().getOrFetch(player.getUniqueId()).orElse(null);
+        CoinsUser user = (Bukkit.isPrimaryThread() ? this.api.getCachedUserData(player.getUniqueId()) : this.api.userManager().getOrFetch(player.getUniqueId())).orElse(null);
         return this.has(user, amount);
     }
 
@@ -172,12 +175,12 @@ public class EconomyCurrency extends AbstractCurrency implements Economy {
 
     @Override
     public boolean has(String playerName, double amount) {
-        CoinsUser user = this.api.userManager().getOrFetch(playerName).orElse(null);
+        CoinsUser user = (Bukkit.isPrimaryThread() ? this.api.getCachedUserData(playerName) : this.api.userManager().getOrFetch(playerName)).orElse(null);
         return this.has(user, amount);
     }
 
     private boolean has(@Nullable CoinsUser user, double amount) {
-        return user != null && user.hasEnough(this, amount);
+        return user != null && Double.isFinite(amount) && amount >= 0 && this.getBalance(user) >= amount;
     }
 
 
@@ -188,7 +191,9 @@ public class EconomyCurrency extends AbstractCurrency implements Economy {
 
     @Override
     public EconomyResponse depositPlayer(OfflinePlayer player, double amount) {
-        CoinsUser user = this.api.userManager().getOrFetch(player.getUniqueId()).orElse(null);
+        if (Bukkit.isPrimaryThread()) return new EconomyResponse(0, 0, EconomyResponse.ResponseType.FAILURE,
+            "Use ExcellentEconomy async API or VaultUnlocked AsyncEconomy for balance writes");
+        CoinsUser user = (Bukkit.isPrimaryThread() ? this.api.getCachedUserData(player.getUniqueId()) : this.api.userManager().getOrFetch(player.getUniqueId())).orElse(null);
         return this.depositUser(user, amount);
     }
 
@@ -199,7 +204,9 @@ public class EconomyCurrency extends AbstractCurrency implements Economy {
 
     @Override
     public EconomyResponse depositPlayer(String playerName, double amount) {
-        CoinsUser user = this.api.userManager().getOrFetch(playerName).orElse(null);
+        if (Bukkit.isPrimaryThread()) return new EconomyResponse(0, 0, EconomyResponse.ResponseType.FAILURE,
+            "Use ExcellentEconomy async API or VaultUnlocked AsyncEconomy for balance writes");
+        CoinsUser user = (Bukkit.isPrimaryThread() ? this.api.getCachedUserData(playerName) : this.api.userManager().getOrFetch(playerName)).orElse(null);
         return this.depositUser(user, amount);
     }
 
@@ -213,7 +220,7 @@ public class EconomyCurrency extends AbstractCurrency implements Economy {
         OperationResult result = this.api.currencyManager().give(this.operationContext(), user, this, amount);
         EconomyResponse.ResponseType type = result == OperationResult.SUCCESS ? EconomyResponse.ResponseType.SUCCESS : EconomyResponse.ResponseType.FAILURE;
 
-        return new EconomyResponse(amount, user.getBalance(this), type, null);
+        return new EconomyResponse(amount, user.getBalance(this), type, result.success() ? "" : "Balance transaction rejected");
     }
 
 
@@ -224,7 +231,9 @@ public class EconomyCurrency extends AbstractCurrency implements Economy {
 
     @Override
     public EconomyResponse withdrawPlayer(OfflinePlayer player, double amount) {
-        CoinsUser user = this.api.userManager().getOrFetch(player.getUniqueId()).orElse(null);
+        if (Bukkit.isPrimaryThread()) return new EconomyResponse(0, 0, EconomyResponse.ResponseType.FAILURE,
+            "Use ExcellentEconomy async API or VaultUnlocked AsyncEconomy for balance writes");
+        CoinsUser user = (Bukkit.isPrimaryThread() ? this.api.getCachedUserData(player.getUniqueId()) : this.api.userManager().getOrFetch(player.getUniqueId())).orElse(null);
         return this.withdrawUser(user, amount);
     }
 
@@ -235,7 +244,9 @@ public class EconomyCurrency extends AbstractCurrency implements Economy {
 
     @Override
     public EconomyResponse withdrawPlayer(String playerName, double amount) {
-        CoinsUser user = this.api.userManager().getOrFetch(playerName).orElse(null);
+        if (Bukkit.isPrimaryThread()) return new EconomyResponse(0, 0, EconomyResponse.ResponseType.FAILURE,
+            "Use ExcellentEconomy async API or VaultUnlocked AsyncEconomy for balance writes");
+        CoinsUser user = (Bukkit.isPrimaryThread() ? this.api.getCachedUserData(playerName) : this.api.userManager().getOrFetch(playerName)).orElse(null);
         return this.withdrawUser(user, amount);
     }
 
@@ -246,15 +257,10 @@ public class EconomyCurrency extends AbstractCurrency implements Economy {
                 .text());
         }
 
-        if (!user.hasEnough(this, amount)) {
-            return new EconomyResponse(amount, user.getBalance(
-                this), EconomyResponse.ResponseType.FAILURE, Lang.ECONOMY_ERROR_INSUFFICIENT_FUNDS.text());
-        }
-
         OperationResult result = this.api.currencyManager().remove(this.operationContext(), user, this, amount);
         EconomyResponse.ResponseType type = result == OperationResult.SUCCESS ? EconomyResponse.ResponseType.SUCCESS : EconomyResponse.ResponseType.FAILURE;
 
-        return new EconomyResponse(amount, user.getBalance(this), type, null);
+        return new EconomyResponse(amount, user.getBalance(this), type, result.success() ? "" : "Balance transaction rejected");
     }
 
     @NotNull

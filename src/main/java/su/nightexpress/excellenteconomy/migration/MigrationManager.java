@@ -98,14 +98,24 @@ public class MigrationManager extends SimpleManager<EconomyPlugin> {
             return false;
         }
 
-        this.plugin.runTaskAsync(() -> {
-            this.currencyManager.disableOperations();
-            Lang.MIGRATION_STARTED.message().sendWith(sender, builder -> builder.with(EconomyPlaceholders.GENERIC_NAME,
-                migrator::getName));
-            this.migrate(migrator, currency);
-            Lang.MIGRATION_COMPLETED.message().sendWith(sender, builder -> builder.with(
-                EconomyPlaceholders.GENERIC_NAME, migrator::getName));
-            this.currencyManager.allowOperations();
+        this.currencyManager.disableOperations();
+        this.plugin.getAPI().dataHandler().getBalances().submit(() -> {
+            try {
+                this.currencyManager.notify(() -> Lang.MIGRATION_STARTED.message().sendWith(sender,
+                    builder -> builder.with(EconomyPlaceholders.GENERIC_NAME, migrator::getName)));
+                this.migrate(migrator, currency);
+                this.currencyManager.notify(() -> Lang.MIGRATION_COMPLETED.message().sendWith(sender,
+                    builder -> builder.with(EconomyPlaceholders.GENERIC_NAME, migrator::getName)));
+                return true;
+            }
+            finally {
+                if (!this.plugin.getAPI().dataHandler().getBalances().isClosed()) this.currencyManager.allowOperations();
+            }
+        }).exceptionally(exception -> {
+            if (!this.plugin.getAPI().dataHandler().getBalances().isClosed()) this.currencyManager.allowOperations();
+            this.plugin.getLogger().log(java.util.logging.Level.SEVERE, "Balance migration failed", exception);
+            this.currencyManager.notify(() -> Lang.CURRENCY_OPERATION_FAILED.message().send(sender));
+            return false;
         });
 
         return true;

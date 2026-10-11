@@ -11,6 +11,11 @@ import org.jspecify.annotations.Nullable;
 import su.nightexpress.excellenteconomy.api.currency.ExcellentCurrency;
 import su.nightexpress.excellenteconomy.user.CoinsUser;
 
+/**
+ * Fired asynchronously before commit with the locked database values. Cancellation rolls back the transaction.
+ * Listeners must not wait for other economy operations or perform Bukkit world/entity work here.
+ * A later storage failure can still roll back an approved change.
+ */
 public final class ChangeBalanceEvent extends Event implements Cancellable {
 
     private static final HandlerList HANDLER_LIST = new HandlerList();

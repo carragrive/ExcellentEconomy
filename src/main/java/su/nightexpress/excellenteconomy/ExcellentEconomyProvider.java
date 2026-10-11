@@ -121,8 +121,12 @@ public class ExcellentEconomyProvider implements ExcellentEconomyAPI {
     @Override
     @NonNull
     public CompletableFuture<Double> getBalanceAsync(@NonNull UUID playerId, @NonNull ExcellentCurrency currency) {
-        return this.userManager().loadByIdAsync(playerId).thenApply(opt -> opt.map(user -> user.getBalance(currency))
-            .orElse(0D));
+        return this.dataHandler().getBalances().submit(() -> this.userManager().getOrFetch(playerId)
+            .map(user -> this.dataHandler().getBalances().refresh(user, currency)).orElse(0D))
+            .exceptionally(exception -> {
+                this.plugin.getLogger().log(java.util.logging.Level.SEVERE, "Could not read balance for " + playerId, exception);
+                return 0D;
+            });
     }
 
     @Override
@@ -162,9 +166,12 @@ public class ExcellentEconomyProvider implements ExcellentEconomyAPI {
     @NonNull
     public CompletableFuture<OperationResult> depositAsync(@NonNull UUID playerId, @NonNull ExcellentCurrency currency,
                                                            double amount, @NonNull OperationContext context) {
-        return this.userManager().loadByIdAsync(playerId)
-            .thenApply(opt -> opt.map(user -> this.currencyManager().give(context, user, currency, amount)).orElse(
-                OperationResult.FAILURE));
+        return this.dataHandler().getBalances().submit(() -> this.userManager().getOrFetch(playerId)
+            .map(user -> this.currencyManager().give(context, user, currency, amount)).orElse(OperationResult.FAILURE))
+            .exceptionally(exception -> {
+                this.plugin.getLogger().log(java.util.logging.Level.SEVERE, "Economy operation failed for " + playerId, exception);
+                return OperationResult.FAILURE;
+            });
     }
 
     @Override
@@ -217,9 +224,12 @@ public class ExcellentEconomyProvider implements ExcellentEconomyAPI {
     @NonNull
     public CompletableFuture<OperationResult> withdrawAsync(@NonNull UUID playerId, @NonNull ExcellentCurrency currency,
                                                             double amount, @NonNull OperationContext context) {
-        return this.userManager().loadByIdAsync(playerId)
-            .thenApply(opt -> opt.map(user -> this.currencyManager().remove(context, user, currency, amount)).orElse(
-                OperationResult.FAILURE));
+        return this.dataHandler().getBalances().submit(() -> this.userManager().getOrFetch(playerId)
+            .map(user -> this.currencyManager().remove(context, user, currency, amount)).orElse(OperationResult.FAILURE))
+            .exceptionally(exception -> {
+                this.plugin.getLogger().log(java.util.logging.Level.SEVERE, "Economy operation failed for " + playerId, exception);
+                return OperationResult.FAILURE;
+            });
     }
 
     @Override
@@ -273,9 +283,12 @@ public class ExcellentEconomyProvider implements ExcellentEconomyAPI {
     public CompletableFuture<OperationResult> setBalanceAsync(@NonNull UUID playerId,
                                                               @NonNull ExcellentCurrency currency, double amount,
                                                               @NonNull OperationContext context) {
-        return this.userManager().loadByIdAsync(playerId)
-            .thenApply(opt -> opt.map(user -> this.currencyManager().set(context, user, currency, amount)).orElse(
-                OperationResult.FAILURE));
+        return this.dataHandler().getBalances().submit(() -> this.userManager().getOrFetch(playerId)
+            .map(user -> this.currencyManager().set(context, user, currency, amount)).orElse(OperationResult.FAILURE))
+            .exceptionally(exception -> {
+                this.plugin.getLogger().log(java.util.logging.Level.SEVERE, "Economy operation failed for " + playerId, exception);
+                return OperationResult.FAILURE;
+            });
     }
 
     @Override
@@ -305,7 +318,8 @@ public class ExcellentEconomyProvider implements ExcellentEconomyAPI {
     @Override
     @NonNull
     public CoinsUser getCachedUserData(@NonNull Player player) {
-        return this.userManager().getOrFetch(player);
+        return this.userManager().getRepository().getById(player.getUniqueId())
+            .orElseThrow(() -> new IllegalStateException("Player economy data is not loaded"));
     }
 
     @Override

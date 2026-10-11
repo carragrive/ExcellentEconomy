@@ -13,18 +13,20 @@ public interface OperationExecutor {
 
     @NotNull
     static OperationExecutor of(@NotNull CommandSender sender) {
+        String name = sender.getName();
         return new OperationExecutor() {
 
             @Override
             @NotNull
             public String getName() {
-                return sender.getName();
+                return name;
             }
 
             @Override
             @NotNull
             public Optional<CommandSender> getBukkitSender() {
-                return Optional.of(sender);
+                return sender instanceof org.bukkit.entity.Player player && !player.isOnline()
+                    ? Optional.empty() : Optional.of(sender);
             }
         };
     }

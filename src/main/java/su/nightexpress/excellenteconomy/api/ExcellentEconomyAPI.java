@@ -22,6 +22,11 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
+/**
+ * Balance futures complete after the database transaction commits. Callbacks run on database workers.
+ * Player-based reads use the local display cache; asynchronous reads query authoritative storage.
+ * Synchronous writes require an asynchronous caller and fail on the server thread.
+ */
 public interface ExcellentEconomyAPI {
 
     @NonNull

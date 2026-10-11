@@ -9,7 +9,6 @@ import su.nightexpress.excellenteconomy.user.data.CurrencySettings;
 import su.nightexpress.nightcore.db.column.Column;
 import su.nightexpress.nightcore.db.column.ColumnDataReader;
 
-import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
@@ -21,6 +20,7 @@ public class DataColumns {
     public static final Column<Integer> ID = Column.intType("id").primaryKey().autoIncrement().build();
 
     public static final Column<UUID>   USER_UUID      = Column.uuidType("uuid").build();
+    public static final Column<Long> BALANCE_VERSION = Column.longType("balance_version").defaultValue(0L).build();
     public static final Column<String> USER_NAME      = Column.stringType("name", 32).build();
     public static final Column<Long>   USER_LAST_SEEN = Column.longType("last_seen")
         .defaultValue(String.valueOf(System.currentTimeMillis()))
@@ -34,7 +34,7 @@ public class DataColumns {
         .defaultValue(false)
         .build();
 
-    private static final Map<String, Column<Double>> CURRENCY_MAP = new HashMap<>();
+    private static final Map<String, Column<Double>> CURRENCY_MAP = new java.util.concurrent.ConcurrentHashMap<>();
 
     @Contract(pure = true)
     @NonNull
@@ -54,7 +54,8 @@ public class DataColumns {
     }
 
     public static boolean containsCurrency(@NonNull ExcellentCurrency currency) {
-        return CURRENCY_MAP.containsKey(currency.getId());
+        return CURRENCY_MAP.containsKey(currency.getId()) || CURRENCY_MAP.values().stream()
+            .anyMatch(column -> column.getName().equalsIgnoreCase(currency.getColumnName()));
     }
 
     public static void clearCache() {

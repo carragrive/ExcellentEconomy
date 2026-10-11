@@ -18,11 +18,14 @@ import java.util.UUID;
 public class UserManager extends AbstractUserManager<EconomyPlugin, CoinsUser> {
 
     private final CurrencyRegistry registry;
+    private final DataHandler dataHandler;
+    private final java.util.Set<UUID> online = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     public UserManager(@NonNull EconomyPlugin plugin, @NonNull CurrencyRegistry registry,
                        @NonNull DataHandler dataHandler) {
         super(plugin, new DefaultUserDataAccessor<>(dataHandler, dataHandler));
         this.registry = registry;
+        this.dataHandler = dataHandler;
     }
 
     @Override
@@ -40,26 +43,43 @@ public class UserManager extends AbstractUserManager<EconomyPlugin, CoinsUser> {
 
         this.registry.getCurrencies().forEach(currency -> balance.set(currency, currency.getStartValue()));
 
-        return new CoinsUser(uuid, name, balance, settingsMap, lastSeen, hiddenFromTops);
+        CoinsUser user = new CoinsUser(uuid, name, balance, settingsMap, lastSeen, hiddenFromTops);
+        user.bindBalances(this.dataHandler.getBalances());
+        return user;
     }
 
     @Override
     protected void handleJoin(@NonNull CoinsUser user) {
         user.setLastSeen(System.currentTimeMillis());
+        this.online.add(user.getId());
+        this.dataHandler.getBalances().submit(() -> {
+            for (ExcellentCurrency currency : this.registry.getCurrencies()) this.dataHandler.getBalances().refresh(user, currency);
+            return true;
+        }).exceptionally(exception -> {
+            if (!this.dataHandler.getBalances().isClosed()) this.plugin.getLogger().log(java.util.logging.Level.WARNING,
+                "Could not refresh joining player's balances: " + user.getId(), exception);
+            return false;
+        });
     }
 
     @Override
     protected void handleQuit(@NonNull CoinsUser user) {
+        this.online.remove(user.getId());
         user.setLastSeen(System.currentTimeMillis());
     }
 
+    public java.util.Set<CoinsUser> getOnlineUsers() {
+        return this.getRepository().getAll().stream().filter(user -> this.online.contains(user.getId()))
+            .collect(java.util.stream.Collectors.toSet());
+    }
+
     @Override
-    protected void synchronize(@NonNull CoinsUser fetched, @NonNull CoinsUser cached) {
+    public void synchronize(@NonNull CoinsUser fetched, @NonNull CoinsUser cached) {
         for (ExcellentCurrency currency : this.registry.getCurrencies()) {
             if (!currency.isSynchronizable()) continue;
 
             double balance = fetched.getBalance(currency);
-            cached.getBalance().set(currency, balance); // Bypass balance event call.
+            cached.getBalance().apply(currency.getId(), balance, fetched.getBalance().getVersion(currency.getId()));
         }
     }
 }

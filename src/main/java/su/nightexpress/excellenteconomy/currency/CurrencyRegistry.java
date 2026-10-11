@@ -15,7 +15,7 @@ public class CurrencyRegistry {
     private final Map<String, ExcellentCurrency> currencyByIdMap;
 
     public CurrencyRegistry() {
-        this.currencyByIdMap = new HashMap<>();
+        this.currencyByIdMap = new java.util.concurrent.ConcurrentHashMap<>();
     }
 
     public void clear() {

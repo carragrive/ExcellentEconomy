@@ -50,10 +50,10 @@ public class PayCommand implements CurrencyCommand {
         String targetName = arguments.getString(CommandArguments.PLAYER);
         double amount = arguments.getDouble(CommandArguments.AMOUNT);
 
-        this.userManager.loadByNameAsync(targetName).thenAccept(opt -> {
-            CoinsUser targetUser = opt.orElse(null);
+        this.manager.executeAsync(sender, () -> {
+            CoinsUser targetUser = this.userManager.getOrFetch(targetName).orElse(null);
             if (targetUser == null) {
-                currency.sendPrefixed(CoreLang.ERROR_INVALID_PLAYER, context.getSender());
+                this.manager.notify(() -> currency.sendPrefixed(CoreLang.ERROR_INVALID_PLAYER, sender));
                 return;
             }
 

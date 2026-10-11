@@ -1,3 +1,11 @@
+## About this fork
+
+This fork prevents lost balances during concurrent changes across servers sharing a database. It adds transactional balance updates, atomic payments and exchanges, and VaultUnlocked's async economy API; autosaves no longer overwrite balances.
+
+**Compatibility:** upgrade all servers together. Integrations must use ExcellentEconomy's async API or VaultUnlocked's async API; synchronous writes on the server thread are rejected.
+
+---
+
 <p align="center">
   <img src="https://nightexpressdev.com/excellenteconomy/logo.png">
 </p>

@@ -270,7 +270,8 @@ public class CurrencyManager extends AbstractManager<EconomyPlugin> {
                 this.userManager);
         }
         else {
-            currency = CurrencyFactory.createNormal(path, id);
+            // Loading the shared factory also links its optional Vault implementation.
+            currency = new NormalCurrency(path, id);
         }
 
         // Useless until we remake the plugin reload system.

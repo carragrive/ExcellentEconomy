@@ -3,6 +3,7 @@ package su.nightexpress.excellenteconomy.data;
 import org.bukkit.Bukkit;
 import su.nightexpress.excellenteconomy.EconomyPlugin;
 import su.nightexpress.excellenteconomy.api.currency.ExcellentCurrency;
+import su.nightexpress.excellenteconomy.api.currency.CurrencyPrecision;
 import su.nightexpress.excellenteconomy.api.event.ChangeBalanceEvent;
 import su.nightexpress.excellenteconomy.user.CoinsUser;
 import su.nightexpress.excellenteconomy.user.UserBalance;
@@ -131,7 +132,7 @@ public final class BalanceService implements AutoCloseable {
             BalanceStore.Balance balance = this.store.read(user.getId(), currency.getColumnName());
             if (balance == null) throw new IllegalStateException("Account does not exist");
             if (!this.closed) user.getBalance().apply(currency.getId(), balance.amount(), balance.version());
-            return balance.amount();
+            return CurrencyPrecision.normalize(balance.amount(), currency.isDecimal());
         }
         catch (SQLException exception) {
             throw new IllegalStateException("Could not read balance for " + user.getId(), exception);

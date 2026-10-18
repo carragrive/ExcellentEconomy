@@ -44,6 +44,7 @@ class VaultUnlockedEconomyTest {
     private CoinsUser seller;
     private ExcellentCurrency currency;
     private Logger logger;
+    private String url;
 
     @BeforeEach
     void setup() throws Exception {
@@ -68,7 +69,7 @@ class VaultUnlockedEconomyTest {
         when(plugin.getServer()).thenReturn(server);
         this.logger = mock(Logger.class);
         when(plugin.getLogger()).thenReturn(this.logger);
-        String url = "jdbc:h2:mem:" + UUID.randomUUID() + ";MODE=MySQL;DB_CLOSE_DELAY=-1";
+        this.url = "jdbc:h2:mem:" + UUID.randomUUID() + ";MODE=MySQL;DB_CLOSE_DELAY=-1";
         this.store = new BalanceStore(() -> DriverManager.getConnection(url), "users", true);
         this.buyer = user("buyer");
         this.seller = user("seller");
@@ -82,7 +83,6 @@ class VaultUnlockedEconomyTest {
         when(this.currency.getColumnName()).thenReturn("coins");
         when(this.currency.isDecimal()).thenReturn(true);
         when(this.currency.getMaxValue()).thenReturn(-1D);
-        when(this.currency.floorIfNeeded(anyDouble())).thenAnswer(call -> call.getArgument(0));
         when(this.currency.isPrimary()).thenReturn(true);
         CurrencyRegistry registry = new CurrencyRegistry();
         registry.add(this.currency);
@@ -95,7 +95,8 @@ class VaultUnlockedEconomyTest {
         when(handler.getBalances()).thenReturn(this.service);
         when(api.dataHandler()).thenReturn(handler);
         when(api.currencyManager()).thenReturn(mock(CurrencyManager.class));
-        UserManager users = mock(UserManager.class);
+        UserManager users = mock(UserManager.class, RETURNS_DEEP_STUBS);
+        when(users.getDataAccessor().isExists(any(UUID.class))).thenReturn(true);
         when(users.getOrFetch(this.buyer.getId())).thenReturn(Optional.of(this.buyer));
         when(users.getOrFetch(this.seller.getId())).thenReturn(Optional.of(this.seller));
         when(api.userManager()).thenReturn(users);
@@ -134,7 +135,7 @@ class VaultUnlockedEconomyTest {
         BigDecimal amount = BigDecimal.valueOf(0.1 + 0.2);
         var deposit = this.async.deposit("ooShop", this.seller.getId(), amount).get(5, TimeUnit.SECONDS);
         assertTrue(deposit.transactionSuccess(), deposit.errorMessage);
-        assertEquals(amount, deposit.amount);
+        assertEquals(0, new BigDecimal("0.3").compareTo(deposit.amount));
         assertEquals(100.3, this.store.read(this.seller.getId(), "coins").amount());
 
         assertTrue(this.async.set("admin", this.seller.getId(), BigDecimal.valueOf(100.00000000000001))
@@ -160,6 +161,67 @@ class VaultUnlockedEconomyTest {
         }
         verify(this.logger, times(1)).warning(contains("Balance exceeds supported numeric precision"));
         assertEquals(1e20, this.store.read(this.seller.getId(), "coins").amount());
+    }
+
+    @Test
+    void advertisesFiveDecimalsAndRoundsPaymentsBeforeConvertingToDouble() throws Exception {
+        assertEquals(5, this.provider.fractionalDigits("shop"));
+        assertEquals(5, this.provider.fractionalDigits("shop", "coins"));
+        var response = this.async.deposit("shop", this.seller.getId(), new BigDecimal("1.234564999999999999"))
+            .get(5, TimeUnit.SECONDS);
+        assertTrue(response.transactionSuccess(), response.errorMessage);
+        assertEquals(0, new BigDecimal("1.23456").compareTo(response.amount));
+        assertEquals(101.23456, this.store.read(this.seller.getId(), "coins").amount());
+        assertEquals(101.23456, this.seller.getBalance(this.currency));
+
+        var withdrawal = this.async.withdraw("shop", this.seller.getId(), new BigDecimal("1.234565"))
+            .get(5, TimeUnit.SECONDS);
+        assertTrue(withdrawal.transactionSuccess(), withdrawal.errorMessage);
+        assertEquals(0, new BigDecimal("1.23457").compareTo(withdrawal.amount));
+        assertEquals(99.99999, this.store.read(this.seller.getId(), "coins").amount());
+    }
+
+    @Test
+    void preflightAndWritesAgreeOnMinimumUnitsAndRoundedAmounts() throws Exception {
+        BigDecimal subunit = new BigDecimal("0.0000049");
+        assertFalse(this.async.canDeposit("shop", this.seller.getId(), subunit).get(5, TimeUnit.SECONDS).transactionSuccess());
+        assertFalse(this.async.canWithdraw("shop", this.seller.getId(), subunit).get(5, TimeUnit.SECONDS).transactionSuccess());
+        assertFalse(this.async.deposit("shop", this.seller.getId(), subunit).get(5, TimeUnit.SECONDS).transactionSuccess());
+        assertFalse(this.async.withdraw("shop", this.seller.getId(), subunit).get(5, TimeUnit.SECONDS).transactionSuccess());
+        assertEquals(net.milkbowl.vault2.economy.EconomyResponse.ResponseType.FAILURE,
+            this.async.transfer("pay", this.buyer.getId(), this.seller.getId(), subunit).get(5, TimeUnit.SECONDS).type());
+        BigDecimal wholeBalance = new BigDecimal("100.000004");
+        assertTrue(this.async.has("shop", this.seller.getId(), wholeBalance).get(5, TimeUnit.SECONDS));
+        assertTrue(this.async.canWithdraw("shop", this.seller.getId(), wholeBalance).get(5, TimeUnit.SECONDS).transactionSuccess());
+        assertTrue(this.async.withdraw("shop", this.seller.getId(), wholeBalance).get(5, TimeUnit.SECONDS).transactionSuccess());
+        assertEquals(0, this.store.read(this.seller.getId(), "coins").amount());
+    }
+
+    @Test
+    void integerCurrenciesStillFloorPayments() throws Exception {
+        when(this.currency.isDecimal()).thenReturn(false);
+        assertEquals(0, this.provider.fractionalDigits("shop"));
+        var response = this.async.deposit("shop", this.seller.getId(), new BigDecimal("1.99999")).get(5, TimeUnit.SECONDS);
+        assertTrue(response.transactionSuccess(), response.errorMessage);
+        assertEquals(0, BigDecimal.ONE.compareTo(response.amount));
+        assertEquals(101, this.store.read(this.seller.getId(), "coins").amount());
+    }
+
+    @Test
+    void legacyReadsUseFiveDecimalsWithoutWritingUntilTheNextTransaction() throws Exception {
+        try (var connection = DriverManager.getConnection(this.url);
+             var statement = connection.prepareStatement("UPDATE users SET coins = ? WHERE uuid = ?")) {
+            statement.setDouble(1, 12.3456789);
+            statement.setString(2, this.seller.getId().toString());
+            statement.executeUpdate();
+        }
+        assertEquals(0, new BigDecimal("12.34568").compareTo(
+            this.async.balance("shop", this.seller.getId()).get(5, TimeUnit.SECONDS)));
+        assertEquals(12.34568, this.seller.getBalance(this.currency));
+        assertEquals(12.3456789, this.store.read(this.seller.getId(), "coins").amount());
+        assertEquals(0, this.store.read(this.seller.getId(), "coins").version());
+        assertTrue(this.async.deposit("shop", this.seller.getId(), BigDecimal.ONE).get(5, TimeUnit.SECONDS).transactionSuccess());
+        assertEquals(13.34568, this.store.read(this.seller.getId(), "coins").amount());
     }
 
     @Test

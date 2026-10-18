@@ -6,6 +6,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import org.jspecify.annotations.NonNull;
 
 import su.nightexpress.excellenteconomy.api.currency.ExcellentCurrency;
+import su.nightexpress.excellenteconomy.api.currency.CurrencyPrecision;
 
 public class UserBalance {
 
@@ -57,7 +58,7 @@ public class UserBalance {
     }
 
     public double get(@NonNull ExcellentCurrency currency) {
-        return this.get(currency.getId());
+        return CurrencyPrecision.normalize(this.get(currency.getId()), currency.isDecimal());
     }
 
     public double get(@NonNull String currencyId) {

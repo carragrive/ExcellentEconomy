@@ -1,5 +1,7 @@
 package su.nightexpress.excellenteconomy.data;
 
+import su.nightexpress.excellenteconomy.api.currency.CurrencyPrecision;
+
 import java.sql.Connection;
 import java.math.BigDecimal;
 import java.sql.PreparedStatement;
@@ -107,21 +109,22 @@ public final class BalanceStore {
                 for (Mutation mutation : mutations) {
                     Balance balance = this.read(connection, mutation.userId(), mutation.column());
                     if (balance == null) throw new SQLException("Account disappeared while locked");
-                    double amount = mutation.decimal() ? mutation.amount() : Math.floor(mutation.amount());
-                    if (mutation.amount() > 0 && amount == 0) {
+                    BigDecimal amount = CurrencyPrecision.normalize(BigDecimal.valueOf(mutation.amount()), mutation.decimal());
+                    if (mutation.amount() > 0 && amount.signum() == 0) {
                         connection.rollback();
                         return Result.failure("Amount is below the currency's minimum unit");
                     }
-                    double edited = mutation.action() == Action.EDIT ? mutation.editor().applyAsDouble(balance.amount()) : amount;
-                    if (!Double.isFinite(edited)) {
+                    BigDecimal previous = CurrencyPrecision.normalize(BigDecimal.valueOf(balance.amount()), mutation.decimal());
+                    double edited = mutation.action() == Action.EDIT ? mutation.editor().applyAsDouble(previous.doubleValue()) : amount.doubleValue();
+                    if (!Double.isFinite(edited) || edited < 0) {
                         connection.rollback();
                         return Result.failure("Invalid balance");
                     }
                     BigDecimal exact = switch (mutation.action()) {
-                        case ADD -> BigDecimal.valueOf(balance.amount()).add(BigDecimal.valueOf(amount));
-                        case REMOVE -> BigDecimal.valueOf(balance.amount()).subtract(BigDecimal.valueOf(amount));
-                        case SET -> BigDecimal.valueOf(amount);
-                        case EDIT -> BigDecimal.valueOf(mutation.decimal() ? edited : Math.floor(edited));
+                        case ADD -> previous.add(amount);
+                        case REMOVE -> previous.subtract(amount);
+                        case SET -> amount;
+                        case EDIT -> CurrencyPrecision.normalize(BigDecimal.valueOf(edited), mutation.decimal());
                     };
                     double updated = exact.doubleValue();
                     if (!Double.isFinite(updated) || exact.signum() < 0
@@ -129,17 +132,10 @@ public final class BalanceStore {
                         connection.rollback();
                         return Result.failure(exact.signum() < 0 ? "Insufficient funds" : "Balance limit exceeded");
                     }
-                    BigDecimal roundingError = BigDecimal.valueOf(updated).subtract(exact).abs();
-                    if (roundingError.signum() != 0) {
-                        // Bound noise by the smaller input so rounding cannot swallow a credit or an existing balance.
-                        double smaller = Math.min(balance.amount(), amount);
-                        BigDecimal tolerance = BigDecimal.valueOf(Math.ulp(smaller)).multiply(BigDecimal.valueOf(2))
-                            .min(BigDecimal.valueOf(smaller).scaleByPowerOfTen(-15));
-                        if (!mutation.decimal() || updated == balance.amount() || roundingError.compareTo(tolerance) > 0) {
-                            connection.rollback();
-                            return Result.failure("Balance exceeds supported numeric precision (account=" + mutation.userId()
-                                + ", column=" + mutation.column() + ", balance=" + balance.amount() + ", amount=" + amount + ")");
-                        }
+                    if (BigDecimal.valueOf(updated).compareTo(exact) != 0) {
+                        connection.rollback();
+                        return Result.failure("Balance exceeds supported numeric precision (account=" + mutation.userId()
+                            + ", column=" + mutation.column() + ", balance=" + balance.amount() + ", amount=" + amount.doubleValue() + ")");
                     }
                     if (balance.version() == Long.MAX_VALUE) throw new SQLException("Balance version exhausted");
                     changes.add(new Change(mutation.userId(), mutation.column(), balance.amount(), updated, balance.version() + 1));

@@ -202,19 +202,21 @@ class BalanceStoreTest {
     @CsvSource({
         "0.30000000000000004, 1, 1.3",
         "100.00000000000001, 100, 200",
-        "1234.5678901234567, 10000, 11234.567890123457",
-        "100, 0.30000000000000004, 100.3"
+        "1234.5678901234567, 10000, 11234.56789",
+        "100, 0.30000000000000004, 100.3",
+        "1.234565, 0.000005, 1.23458",
+        "1.234564, 0.000006, 1.23457"
     })
     void decimalDepositsAcceptRoundingResidue(double balance, double amount, double expected) throws Exception {
-        assertTrue(apply(this.first, mutation(SELLER, "coins", BalanceStore.Action.SET, balance)).success());
+        seedLegacyBalance(SELLER, balance);
         BalanceStore.Result result = apply(this.first, mutation(SELLER, "coins", BalanceStore.Action.ADD, amount));
         assertTrue(result.success(), result.error());
         assertEquals(expected, this.first.read(SELLER, "coins").amount());
-        assertEquals(2, this.first.read(SELLER, "coins").version());
+        assertEquals(1, this.first.read(SELLER, "coins").version());
     }
 
     @ParameterizedTest
-    @CsvSource({"1.3, 0.30000000000000004, 1", "100, 33.333333333333336, 66.66666666666666"})
+    @CsvSource({"1.3, 0.30000000000000004, 1", "100, 33.333333333333336, 66.66667"})
     void decimalWithdrawalsAcceptRoundingResidue(double balance, double amount, double expected) throws Exception {
         assertTrue(apply(this.first, mutation(SELLER, "coins", BalanceStore.Action.SET, balance)).success());
         BalanceStore.Result result = apply(this.first, mutation(SELLER, "coins", BalanceStore.Action.REMOVE, amount));
@@ -224,7 +226,7 @@ class BalanceStoreTest {
 
     @Test
     void transferToAnAccountWithRoundingResidueCommitsBothSides() throws Exception {
-        assertTrue(apply(this.first, mutation(SELLER, "coins", BalanceStore.Action.SET, 100.00000000000001)).success());
+        seedLegacyBalance(SELLER, 100.00000000000001);
         BalanceStore.Result result = apply(this.first,
             mutation(BUYER, "coins", BalanceStore.Action.REMOVE, 100),
             mutation(SELLER, "coins", BalanceStore.Action.ADD, 100));
@@ -236,18 +238,18 @@ class BalanceStoreTest {
     @Test
     void roundingCannotHideAnOverdraftOrBalanceLimitViolation() throws Exception {
         assertTrue(apply(this.first, mutation(SELLER, "coins", BalanceStore.Action.SET, 0.3)).success());
-        assertFalse(apply(this.first, mutation(SELLER, "coins", BalanceStore.Action.REMOVE, 0.30000000000000004)).success());
+        assertFalse(apply(this.first, mutation(SELLER, "coins", BalanceStore.Action.REMOVE, 0.300005)).success());
         assertEquals(0.3, this.first.read(SELLER, "coins").amount());
 
         assertFalse(apply(this.first,
             mutation(SELLER, "coins", BalanceStore.Action.REMOVE, 0.1),
-            new BalanceStore.Mutation(BUYER, "coins", BalanceStore.Action.ADD, 0.30000000000000004, true, 100.3)).success());
+            new BalanceStore.Mutation(BUYER, "coins", BalanceStore.Action.ADD, 0.300005, true, 100.300006)).success());
         assertEquals(0.3, this.first.read(SELLER, "coins").amount());
         assertEquals(100, this.first.read(BUYER, "coins").amount());
     }
 
     @ParameterizedTest
-    @CsvSource({"100000000000000000000, 10000", "1, 100000000000000000000", "1, 4.9E-324", "1.0E-323, 4.9E-324"})
+    @CsvSource({"100000000000000000000, 10000", "1, 100000000000000000000"})
     void roundingCannotLoseAChangeOrAnExistingBalance(double balance, double amount) throws Exception {
         assertTrue(apply(this.first, mutation(SELLER, "coins", BalanceStore.Action.SET, balance)).success());
         BalanceStore.Result result = apply(this.first, mutation(SELLER, "coins", BalanceStore.Action.ADD, amount));
@@ -278,6 +280,49 @@ class BalanceStoreTest {
         assertFalse(apply(this.first, mutation(SELLER, "coins", BalanceStore.Action.REMOVE, 20),
             new BalanceStore.Mutation(SELLER, "tokens", BalanceStore.Action.ADD, 0.5, false, -1)).success());
         assertEquals(100, this.first.read(SELLER, "coins").amount());
+    }
+
+    @Test
+    void decimalSubunitPaymentsAreRejectedAndTransfersUseTheSameRoundedAmount() throws Exception {
+        for (double amount : new double[]{Double.MIN_VALUE, 0.0000049}) {
+            assertFalse(apply(this.first,
+                mutation(SELLER, "coins", BalanceStore.Action.REMOVE, 1),
+                mutation(BUYER, "coins", BalanceStore.Action.ADD, amount)).success());
+        }
+        assertEquals(100, this.first.read(SELLER, "coins").amount());
+        assertEquals(100, this.first.read(BUYER, "coins").amount());
+        assertTrue(apply(this.first,
+            mutation(SELLER, "coins", BalanceStore.Action.REMOVE, 1.234567),
+            mutation(BUYER, "coins", BalanceStore.Action.ADD, 1.234567)).success());
+        assertEquals(98.76543, this.first.read(SELLER, "coins").amount());
+        assertEquals(101.23457, this.first.read(BUYER, "coins").amount());
+    }
+
+    @Test
+    void setAndEditNormalizeBalancesAndCancellationPreservesLegacyValue() throws Exception {
+        seedLegacyBalance(SELLER, 1.23456789);
+        assertFalse(this.first.execute(List.of(mutation(SELLER, "coins", BalanceStore.Action.ADD, 1)), changes -> false).success());
+        assertEquals(1.23456789, this.first.read(SELLER, "coins").amount());
+        assertEquals(0, this.first.read(SELLER, "coins").version());
+        assertTrue(apply(this.first, new BalanceStore.Mutation(SELLER, "coins", BalanceStore.Action.EDIT,
+            0, true, -1, previous -> {
+                assertEquals(1.23457, previous);
+                return previous + 0.123456;
+            })).success());
+        assertEquals(1.35803, this.first.read(SELLER, "coins").amount());
+        assertTrue(apply(this.first, mutation(SELLER, "coins", BalanceStore.Action.SET, 1.234565)).success());
+        assertEquals(1.23457, this.first.read(SELLER, "coins").amount());
+        assertFalse(apply(this.first, new BalanceStore.Mutation(SELLER, "coins", BalanceStore.Action.EDIT,
+            0, true, -1, previous -> -0.000001)).success());
+    }
+
+    private void seedLegacyBalance(UUID account, double amount) throws SQLException {
+        try (var connection = DriverManager.getConnection(this.url);
+             var statement = connection.prepareStatement("UPDATE users SET coins = ? WHERE uuid = ?")) {
+            statement.setDouble(1, amount);
+            statement.setString(2, account.toString());
+            assertEquals(1, statement.executeUpdate());
+        }
     }
 
     private static List<BalanceStore.Result> race(Callable<BalanceStore.Result> first, Callable<BalanceStore.Result> second) throws Exception {

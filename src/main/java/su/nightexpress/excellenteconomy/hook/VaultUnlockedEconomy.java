@@ -9,6 +9,7 @@ import org.bukkit.plugin.ServicePriority;
 import org.bukkit.Bukkit;
 import su.nightexpress.excellenteconomy.EconomyPlugin;
 import su.nightexpress.excellenteconomy.api.currency.ExcellentCurrency;
+import su.nightexpress.excellenteconomy.api.currency.CurrencyPrecision;
 import su.nightexpress.excellenteconomy.data.BalanceStore;
 import su.nightexpress.excellenteconomy.user.CoinsUser;
 
@@ -48,8 +49,8 @@ public final class VaultUnlockedEconomy implements Economy, AutoCloseable {
     @Override public boolean hasSharedAccountSupport() { return false; }
     @Override public boolean hasMultiCurrencySupport() { return true; }
     @Override public Optional<AsyncEconomy> async() { return Optional.of(this.asynchronous); }
-    @Override public int fractionalDigits(String pluginName) { return this.primary().isDecimal() ? -1 : 0; }
-    @Override public int fractionalDigits(String pluginName, String currency) { return this.currency(currency).isDecimal() ? -1 : 0; }
+    @Override public int fractionalDigits(String pluginName) { return this.primary().isDecimal() ? CurrencyPrecision.DECIMAL_PLACES : 0; }
+    @Override public int fractionalDigits(String pluginName, String currency) { return this.currency(currency).isDecimal() ? CurrencyPrecision.DECIMAL_PLACES : 0; }
     @Override public String format(BigDecimal amount) { return this.format("", amount); }
     @Override public String format(String pluginName, BigDecimal amount) { return this.primary().format(amount.doubleValue()); }
     @Override public String format(BigDecimal amount, String currency) { return this.format("", amount, currency); }
@@ -107,35 +108,41 @@ public final class VaultUnlockedEconomy implements Economy, AutoCloseable {
     @Override public boolean has(String pluginName, UUID accountID, BigDecimal amount) { return this.has(pluginName, accountID, "", this.getDefaultCurrency(pluginName), amount); }
     @Override public boolean has(String pluginName, UUID accountID, String world, BigDecimal amount) { return this.has(pluginName, accountID, world, this.getDefaultCurrency(pluginName), amount); }
     @Override public boolean has(String pluginName, UUID accountID, String world, String currency, BigDecimal amount) {
-        return this.hasCurrency(currency) && this.hasAccount(accountID) && valid(amount) && this.getBalance(pluginName, accountID, world, currency).compareTo(amount) >= 0;
+        BigDecimal requested = normalize(this.currency(currency), amount);
+        return requested != null && this.hasAccount(accountID) && this.getBalance(pluginName, accountID, world, currency).compareTo(requested) >= 0;
     }
 
-    private static boolean valid(BigDecimal amount) {
-        return amount != null && amount.signum() >= 0 && Double.isFinite(amount.doubleValue())
-            && BigDecimal.valueOf(amount.doubleValue()).compareTo(amount) == 0;
+    private static BigDecimal normalize(ExcellentCurrency currency, BigDecimal amount) {
+        if (currency == null || amount == null || amount.signum() < 0 || !Double.isFinite(amount.doubleValue())) return null;
+        BigDecimal rounded = CurrencyPrecision.normalize(amount, currency.isDecimal());
+        if (amount.signum() > 0 && rounded.signum() == 0) return null;
+        return BigDecimal.valueOf(rounded.doubleValue()).compareTo(rounded) == 0 ? rounded : null;
     }
 
     private EconomyResponse change(String pluginName, UUID accountID, String currency, BigDecimal amount, BalanceStore.Action action) {
         if (Bukkit.isPrimaryThread()) return failure("Use VaultUnlocked AsyncEconomy for balance writes");
-        if (!this.isEnabled() || !valid(amount)) return failure("Economy unavailable or invalid amount");
         ExcellentCurrency selected = this.currency(currency);
+        BigDecimal requested = normalize(selected, amount);
+        if (!this.isEnabled() || requested == null) return failure("Economy unavailable or invalid amount (minimum currency unit required)");
         CoinsUser user = this.plugin.getAPI().userManager().getOrFetch(accountID).orElse(null);
         if (selected == null || user == null) return failure("Unknown currency or account");
-        BalanceStore.Result result = this.plugin.getAPI().dataHandler().getBalances().change(user, selected, action, amount.doubleValue());
+        BalanceStore.Result result = this.plugin.getAPI().dataHandler().getBalances().change(user, selected, action, requested.doubleValue());
         if (!result.success()) return failure(result.error());
         this.plugin.getAPI().currencyManager().logTransaction(pluginName, result);
         BalanceStore.Change change = result.changes().getFirst();
-        return new EconomyResponse(BigDecimal.valueOf(selected.floorIfNeeded(amount.doubleValue())), BigDecimal.valueOf(change.after()), EconomyResponse.ResponseType.SUCCESS, "");
+        return new EconomyResponse(requested, BigDecimal.valueOf(change.after()), EconomyResponse.ResponseType.SUCCESS, "");
     }
 
     private EconomyResponse check(String pluginName, UUID accountID, String currency, BigDecimal amount, boolean withdrawal) {
-        if (!this.isEnabled() || !valid(amount)) return failure("Economy unavailable or invalid amount");
         ExcellentCurrency selected = this.currency(currency);
+        BigDecimal requested = normalize(selected, amount);
+        if (!this.isEnabled() || requested == null) return failure("Economy unavailable or invalid amount (minimum currency unit required)");
         if (selected == null || !this.hasAccount(accountID)) return failure("Unknown currency or account");
         BigDecimal balance = this.getBalance(pluginName, accountID, "", currency);
-        BigDecimal requested = BigDecimal.valueOf(selected.floorIfNeeded(amount.doubleValue()));
         BigDecimal updated = withdrawal ? balance.subtract(requested) : balance.add(requested);
-        boolean allowed = updated.signum() >= 0 && Double.isFinite(updated.doubleValue()) && selected.isUnderLimit(updated.doubleValue());
+        boolean allowed = updated.signum() >= 0 && Double.isFinite(updated.doubleValue())
+            && BigDecimal.valueOf(updated.doubleValue()).compareTo(updated) == 0
+            && (selected.getMaxValue() <= 0 || updated.compareTo(BigDecimal.valueOf(selected.getMaxValue())) <= 0);
         return new EconomyResponse(requested, balance, allowed ? EconomyResponse.ResponseType.SUCCESS : EconomyResponse.ResponseType.FAILURE,
             allowed ? "" : "Insufficient funds or balance limit exceeded");
     }
@@ -170,17 +177,18 @@ public final class VaultUnlockedEconomy implements Economy, AutoCloseable {
     public MultiEconomyResponse transfer(String pluginName, UUID from, UUID to, String worldName, String currency, BigDecimal amount) {
         if (Bukkit.isPrimaryThread()) return new MultiEconomyResponse(BigDecimal.ZERO, EconomyResponse.ResponseType.FAILURE,
             "Use VaultUnlocked AsyncEconomy for transfers");
-        if (!this.isEnabled() || !valid(amount) || from.equals(to)) {
+        ExcellentCurrency selected = this.currency(currency);
+        BigDecimal requested = normalize(selected, amount);
+        if (!this.isEnabled() || requested == null || from.equals(to)) {
             return new MultiEconomyResponse(BigDecimal.ZERO, EconomyResponse.ResponseType.FAILURE, "Invalid transfer");
         }
-        ExcellentCurrency selected = this.currency(currency);
         CoinsUser sender = this.plugin.getAPI().userManager().getOrFetch(from).orElse(null);
         CoinsUser recipient = this.plugin.getAPI().userManager().getOrFetch(to).orElse(null);
         if (selected == null || sender == null || recipient == null) {
             return new MultiEconomyResponse(BigDecimal.ZERO, EconomyResponse.ResponseType.FAILURE, "Unknown currency or account");
         }
-        BalanceStore.Result result = this.plugin.getAPI().dataHandler().getBalances().transfer(sender, recipient, selected, selected, amount.doubleValue(), amount.doubleValue());
-        MultiEconomyResponse response = new MultiEconomyResponse(result.success() ? BigDecimal.valueOf(selected.floorIfNeeded(amount.doubleValue())) : BigDecimal.ZERO,
+        BalanceStore.Result result = this.plugin.getAPI().dataHandler().getBalances().transfer(sender, recipient, selected, selected, requested.doubleValue(), requested.doubleValue());
+        MultiEconomyResponse response = new MultiEconomyResponse(result.success() ? requested : BigDecimal.ZERO,
             result.success() ? EconomyResponse.ResponseType.SUCCESS : EconomyResponse.ResponseType.FAILURE, result.error());
         if (result.success()) this.plugin.getAPI().currencyManager().logTransaction(pluginName, result);
         result.changes().forEach(change -> response.addBalance(change.userId(), BigDecimal.valueOf(change.after())));

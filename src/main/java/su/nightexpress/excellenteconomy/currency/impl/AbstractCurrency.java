@@ -6,6 +6,7 @@ import org.bukkit.entity.Player;
 import org.jspecify.annotations.NonNull;
 
 import su.nightexpress.excellenteconomy.EconomyPlaceholders;
+import su.nightexpress.excellenteconomy.api.currency.CurrencyPrecision;
 import su.nightexpress.excellenteconomy.api.currency.ExcellentCurrency;
 import su.nightexpress.excellenteconomy.config.Config;
 import su.nightexpress.excellenteconomy.config.Perms;
@@ -21,6 +22,8 @@ import su.nightexpress.nightcore.util.number.CompactNumber;
 import su.nightexpress.nightcore.util.placeholder.PlaceholderContext;
 import su.nightexpress.nightcore.util.placeholder.PlaceholderResolver;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.nio.file.Path;
 import java.text.DecimalFormat;
 import java.util.Arrays;
@@ -35,7 +38,7 @@ public abstract class AbstractCurrency implements ExcellentCurrency, ConfigBacke
     private static final DecimalFormat RAW_FORMAT = new DecimalFormat("#");
 
     static {
-        RAW_FORMAT.setMaximumFractionDigits(8);
+        RAW_FORMAT.setMaximumFractionDigits(CurrencyPrecision.DECIMAL_PLACES);
     }
 
     protected final Path                path;
@@ -300,7 +303,7 @@ public abstract class AbstractCurrency implements ExcellentCurrency, ConfigBacke
 
     @Override
     public double floorIfNeeded(double amount) {
-        return Math.max(0, this.decimal ? amount : Math.floor(amount));
+        return Math.max(0, CurrencyPrecision.normalize(amount, this.decimal));
     }
 
     @Override
@@ -310,7 +313,10 @@ public abstract class AbstractCurrency implements ExcellentCurrency, ConfigBacke
 
     @Override
     public double floorAndLimit(double amount) {
-        return this.floorIfNeeded(this.limitIfNeeded(amount));
+        double rounded = this.floorIfNeeded(amount);
+        return this.isLimited() && rounded > this.maxValue
+            ? BigDecimal.valueOf(this.maxValue).setScale(this.decimal ? CurrencyPrecision.DECIMAL_PLACES : 0, RoundingMode.FLOOR).doubleValue()
+            : rounded;
     }
 
     @Override
@@ -510,7 +516,7 @@ public abstract class AbstractCurrency implements ExcellentCurrency, ConfigBacke
 
     @Override
     public double getStartValue() {
-        return this.startValue;
+        return this.floorAndLimit(this.startValue);
     }
 
     @Override

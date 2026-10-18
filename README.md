@@ -4,6 +4,10 @@ This fork prevents lost balances during concurrent changes across servers sharin
 
 **Compatibility:** upgrade all servers together. Integrations must use ExcellentEconomy's async API or VaultUnlocked's async API; synchronous writes on the server thread are rejected.
 
+Decimal balance changes tolerate floating-point conversion residue within two ULPs (representable steps) of the smaller of the stored balance and transaction amount, capped at one quadrillionth of that smaller value. This applies during atomic transactions to existing balances and incoming payments; no database migration is required. Integer currencies still require exact arithmetic. Overdrafts and balance caps are checked before rounding, and changes that lose a credit or materially distort either input are rejected.
+
+Remaining precision rejections include the account UUID, balance column, stored balance, and requested amount in the API response and server log. These warnings are limited to one per minute per server.
+
 ---
 
 <p align="center">

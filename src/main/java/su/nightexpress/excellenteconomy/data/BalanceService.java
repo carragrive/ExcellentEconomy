@@ -15,6 +15,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 import java.util.logging.Level;
@@ -25,6 +26,7 @@ public final class BalanceService implements AutoCloseable {
     private final BalanceStore store;
     private final ThreadPoolExecutor executor;
     private final ThreadLocal<Boolean> inTransaction = ThreadLocal.withInitial(() -> false);
+    private final AtomicLong nextPrecisionWarning = new AtomicLong();
     private volatile boolean closed;
 
     public BalanceService(EconomyPlugin plugin, BalanceStore store) {
@@ -91,6 +93,13 @@ public final class BalanceService implements AutoCloseable {
                 }
                 return !this.closed;
             });
+            if (!result.success() && result.error().startsWith("Balance exceeds supported numeric precision")) {
+                long now = System.currentTimeMillis();
+                long next = this.nextPrecisionWarning.get();
+                if (now >= next && this.nextPrecisionWarning.compareAndSet(next, now + 60_000)) {
+                    this.plugin.getLogger().warning(result.error().replace('\n', ' ').replace('\r', ' '));
+                }
+            }
             if (result.success() && !this.closed) {
                 for (BalanceStore.Change change : result.changes()) {
                     for (CoinsUser user : users) {

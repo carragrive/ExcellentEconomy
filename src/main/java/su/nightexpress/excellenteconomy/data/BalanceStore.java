@@ -124,13 +124,22 @@ public final class BalanceStore {
                         case EDIT -> BigDecimal.valueOf(mutation.decimal() ? edited : Math.floor(edited));
                     };
                     double updated = exact.doubleValue();
-                    if (Double.isFinite(updated) && BigDecimal.valueOf(updated).compareTo(exact) != 0) {
+                    if (!Double.isFinite(updated) || exact.signum() < 0
+                        || (mutation.maximum() > 0 && exact.compareTo(BigDecimal.valueOf(mutation.maximum())) > 0)) {
                         connection.rollback();
-                        return Result.failure("Balance exceeds supported numeric precision");
+                        return Result.failure(exact.signum() < 0 ? "Insufficient funds" : "Balance limit exceeded");
                     }
-                    if (!Double.isFinite(updated) || updated < 0 || (mutation.maximum() > 0 && updated > mutation.maximum())) {
-                        connection.rollback();
-                        return Result.failure(updated < 0 ? "Insufficient funds" : "Balance limit exceeded");
+                    BigDecimal roundingError = BigDecimal.valueOf(updated).subtract(exact).abs();
+                    if (roundingError.signum() != 0) {
+                        // Bound noise by the smaller input so rounding cannot swallow a credit or an existing balance.
+                        double smaller = Math.min(balance.amount(), amount);
+                        BigDecimal tolerance = BigDecimal.valueOf(Math.ulp(smaller)).multiply(BigDecimal.valueOf(2))
+                            .min(BigDecimal.valueOf(smaller).scaleByPowerOfTen(-15));
+                        if (!mutation.decimal() || updated == balance.amount() || roundingError.compareTo(tolerance) > 0) {
+                            connection.rollback();
+                            return Result.failure("Balance exceeds supported numeric precision (account=" + mutation.userId()
+                                + ", column=" + mutation.column() + ", balance=" + balance.amount() + ", amount=" + amount + ")");
+                        }
                     }
                     if (balance.version() == Long.MAX_VALUE) throw new SQLException("Balance version exhausted");
                     changes.add(new Change(mutation.userId(), mutation.column(), balance.amount(), updated, balance.version() + 1));

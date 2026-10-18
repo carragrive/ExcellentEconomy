@@ -43,6 +43,7 @@ class VaultUnlockedEconomyTest {
     private CoinsUser buyer;
     private CoinsUser seller;
     private ExcellentCurrency currency;
+    private Logger logger;
 
     @BeforeEach
     void setup() throws Exception {
@@ -65,7 +66,8 @@ class VaultUnlockedEconomyTest {
         EconomyPlugin plugin = mock(EconomyPlugin.class);
         when(plugin.isEnabled()).thenReturn(true);
         when(plugin.getServer()).thenReturn(server);
-        when(plugin.getLogger()).thenReturn(Logger.getLogger("economy-test"));
+        this.logger = mock(Logger.class);
+        when(plugin.getLogger()).thenReturn(this.logger);
         String url = "jdbc:h2:mem:" + UUID.randomUUID() + ";MODE=MySQL;DB_CLOSE_DELAY=-1";
         this.store = new BalanceStore(() -> DriverManager.getConnection(url), "users", true);
         this.buyer = user("buyer");
@@ -125,6 +127,39 @@ class VaultUnlockedEconomyTest {
         assertEquals(110, this.store.read(this.seller.getId(), "coins").amount());
         assertEquals(110, this.seller.getBalance(this.currency));
         assertFalse(this.seller.isDirty());
+    }
+
+    @Test
+    void asyncDepositsAndTransfersAcceptRoundingResidue() throws Exception {
+        BigDecimal amount = BigDecimal.valueOf(0.1 + 0.2);
+        var deposit = this.async.deposit("ooShop", this.seller.getId(), amount).get(5, TimeUnit.SECONDS);
+        assertTrue(deposit.transactionSuccess(), deposit.errorMessage);
+        assertEquals(amount, deposit.amount);
+        assertEquals(100.3, this.store.read(this.seller.getId(), "coins").amount());
+
+        assertTrue(this.async.set("admin", this.seller.getId(), BigDecimal.valueOf(100.00000000000001))
+            .get(5, TimeUnit.SECONDS).transactionSuccess());
+        var transfer = this.async.transfer("pay", this.buyer.getId(), this.seller.getId(), BigDecimal.valueOf(100))
+            .get(5, TimeUnit.SECONDS);
+        assertEquals(net.milkbowl.vault2.economy.EconomyResponse.ResponseType.SUCCESS, transfer.type());
+        assertEquals(0, this.store.read(this.buyer.getId(), "coins").amount());
+        assertEquals(200, this.store.read(this.seller.getId(), "coins").amount());
+        assertEquals(200, this.seller.getBalance(this.currency));
+    }
+
+    @Test
+    void unrepresentableCreditsReportContextWithoutFloodingTheLog() throws Exception {
+        assertTrue(this.async.set("admin", this.seller.getId(), BigDecimal.valueOf(1e20))
+            .get(5, TimeUnit.SECONDS).transactionSuccess());
+        for (int attempt = 0; attempt < 2; attempt++) {
+            var response = this.async.deposit("ooShop", this.seller.getId(), BigDecimal.ONE).get(5, TimeUnit.SECONDS);
+            assertFalse(response.transactionSuccess());
+            assertTrue(response.errorMessage.contains("Balance exceeds supported numeric precision"));
+            assertTrue(response.errorMessage.contains("account=" + this.seller.getId()));
+            assertTrue(response.errorMessage.contains("balance=1.0E20, amount=1.0"));
+        }
+        verify(this.logger, times(1)).warning(contains("Balance exceeds supported numeric precision"));
+        assertEquals(1e20, this.store.read(this.seller.getId(), "coins").amount());
     }
 
     @Test

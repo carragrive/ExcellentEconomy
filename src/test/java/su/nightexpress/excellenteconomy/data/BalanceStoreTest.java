@@ -2,6 +2,8 @@ package su.nightexpress.excellenteconomy.data;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -194,6 +196,73 @@ class BalanceStoreTest {
             mutation(SELLER, "coins", BalanceStore.Action.ADD, 1)).success());
         assertEquals(100, this.first.read(BUYER, "coins").amount());
         assertEquals(1e20, this.first.read(SELLER, "coins").amount());
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+        "0.30000000000000004, 1, 1.3",
+        "100.00000000000001, 100, 200",
+        "1234.5678901234567, 10000, 11234.567890123457",
+        "100, 0.30000000000000004, 100.3"
+    })
+    void decimalDepositsAcceptRoundingResidue(double balance, double amount, double expected) throws Exception {
+        assertTrue(apply(this.first, mutation(SELLER, "coins", BalanceStore.Action.SET, balance)).success());
+        BalanceStore.Result result = apply(this.first, mutation(SELLER, "coins", BalanceStore.Action.ADD, amount));
+        assertTrue(result.success(), result.error());
+        assertEquals(expected, this.first.read(SELLER, "coins").amount());
+        assertEquals(2, this.first.read(SELLER, "coins").version());
+    }
+
+    @ParameterizedTest
+    @CsvSource({"1.3, 0.30000000000000004, 1", "100, 33.333333333333336, 66.66666666666666"})
+    void decimalWithdrawalsAcceptRoundingResidue(double balance, double amount, double expected) throws Exception {
+        assertTrue(apply(this.first, mutation(SELLER, "coins", BalanceStore.Action.SET, balance)).success());
+        BalanceStore.Result result = apply(this.first, mutation(SELLER, "coins", BalanceStore.Action.REMOVE, amount));
+        assertTrue(result.success(), result.error());
+        assertEquals(expected, this.first.read(SELLER, "coins").amount());
+    }
+
+    @Test
+    void transferToAnAccountWithRoundingResidueCommitsBothSides() throws Exception {
+        assertTrue(apply(this.first, mutation(SELLER, "coins", BalanceStore.Action.SET, 100.00000000000001)).success());
+        BalanceStore.Result result = apply(this.first,
+            mutation(BUYER, "coins", BalanceStore.Action.REMOVE, 100),
+            mutation(SELLER, "coins", BalanceStore.Action.ADD, 100));
+        assertTrue(result.success(), result.error());
+        assertEquals(0, this.first.read(BUYER, "coins").amount());
+        assertEquals(200, this.first.read(SELLER, "coins").amount());
+    }
+
+    @Test
+    void roundingCannotHideAnOverdraftOrBalanceLimitViolation() throws Exception {
+        assertTrue(apply(this.first, mutation(SELLER, "coins", BalanceStore.Action.SET, 0.3)).success());
+        assertFalse(apply(this.first, mutation(SELLER, "coins", BalanceStore.Action.REMOVE, 0.30000000000000004)).success());
+        assertEquals(0.3, this.first.read(SELLER, "coins").amount());
+
+        assertFalse(apply(this.first,
+            mutation(SELLER, "coins", BalanceStore.Action.REMOVE, 0.1),
+            new BalanceStore.Mutation(BUYER, "coins", BalanceStore.Action.ADD, 0.30000000000000004, true, 100.3)).success());
+        assertEquals(0.3, this.first.read(SELLER, "coins").amount());
+        assertEquals(100, this.first.read(BUYER, "coins").amount());
+    }
+
+    @ParameterizedTest
+    @CsvSource({"100000000000000000000, 10000", "1, 100000000000000000000", "1, 4.9E-324", "1.0E-323, 4.9E-324"})
+    void roundingCannotLoseAChangeOrAnExistingBalance(double balance, double amount) throws Exception {
+        assertTrue(apply(this.first, mutation(SELLER, "coins", BalanceStore.Action.SET, balance)).success());
+        BalanceStore.Result result = apply(this.first, mutation(SELLER, "coins", BalanceStore.Action.ADD, amount));
+        assertFalse(result.success());
+        assertTrue(result.error().startsWith("Balance exceeds supported numeric precision"), result.error());
+        assertEquals(balance, this.first.read(SELLER, "coins").amount());
+        assertEquals(1, this.first.read(SELLER, "coins").version());
+    }
+
+    @Test
+    void integerCurrenciesStillRequireExactArithmetic() throws Exception {
+        assertTrue(apply(this.first, mutation(SELLER, "coins", BalanceStore.Action.SET, 9007199254740992D)).success());
+        assertFalse(apply(this.first, new BalanceStore.Mutation(SELLER, "coins", BalanceStore.Action.ADD,
+            9007199254740994D, false, -1)).success());
+        assertEquals(9007199254740992D, this.first.read(SELLER, "coins").amount());
     }
 
     @Test

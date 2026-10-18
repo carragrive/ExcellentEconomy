@@ -1,12 +1,15 @@
 ## About this fork
 
-This fork prevents lost balances during concurrent changes across servers sharing a database. It adds transactional balance updates, atomic payments and exchanges, and VaultUnlocked's async economy API; autosaves no longer overwrite balances.
+This fork improves balance reliability, including when several servers share the same database.
 
-**Compatibility:** upgrade all servers together. Integrations must use ExcellentEconomy's async API or VaultUnlocked's async API; synchronous writes on the server thread are rejected.
+- Prevents simultaneous balance changes and autosaves from overwriting each other.
+- Ensures both sides of a transfer or currency exchange succeed together, or neither is applied.
+- Rounds decimal amounts to five places (`1.234567` becomes `1.23457`) to prevent payment failures caused by tiny rounding errors. Existing balances are rounded on their next successful update.
+- Adds support for VaultUnlocked's async economy API.
 
-Decimal currencies use at most five decimal places, rounded half up (`1.234567` becomes `1.23457`). Incoming amounts and existing balances are normalized inside each atomic transaction; legacy balances are saved at this precision on their next successful change, without a bulk migration. VaultUnlocked advertises five fractional digits and returns the rounded transaction amount. Positive payments that round to zero are rejected. Integer currencies still floor amounts to whole units. Overdrafts and balance caps apply to the rounded values, and changes too large for the database's double precision to preserve the payment are rejected.
+Upgrade all servers sharing the database together. Other plugins must use ExcellentEconomy's or VaultUnlocked's async API; balance writes on the main server thread are rejected.
 
-Remaining precision rejections include the account UUID, balance column, stored balance, and requested amount in the API response and server log. These warnings are limited to one per minute per server.
+Positive payments that round to zero and balance changes that cannot be stored accurately are rejected.
 
 ---
 
